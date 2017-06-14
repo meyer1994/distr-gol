@@ -1,14 +1,14 @@
-CC=gcc
+CC=mpicc
 
 FLAGS=-O3 -Wno-unused-result
-LDFLAGS=-lpthread
-#DEBUG=-DDEBUG
+DEBUG=-DDEBUG
 RESULT=-DRESULT
 
-all: gol
-
 gol: gol.c
-	$(CC) $(DEBUG) $(RESULT) $(FLAGS) gol.c -o gol
+	$(CC) $(RESULT) $(FLAGS) gol.c -o gol
+
+run:
+	$(CC) $(RESULT) $(FLAGS) gol.c -o gol && ./gol
 
 clean:
 	rm -rf gol
