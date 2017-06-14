@@ -3,6 +3,7 @@
 #include <mpi.h>
 typedef unsigned char cell_t;
 
+
 // prototypes
 cell_t** allocate_board(int size);
 void free_board(cell_t** board, int size);
