@@ -123,29 +123,29 @@ region* get_regions(cell_t** board, int board_size, int total_regions) {
 
     int count = 0;
     while (count < board_size) {
-        regions[count%n].max_line++;
+        regions[count%total_regions].max_line++;
         count++;
     }
 
-    for (int i = 1; i < n; i++) {
+    for (int i = 1; i < total_regions; i++) {
         regions[i].min_line = regions[i-1].max_line;
         regions[i].max_line += regions[i-1].max_line;
     }
 
     // this loop copies the board part into the struct
     for (int i = 0; i < total_regions; i++) {
-        cell_t* region_board[region_size];
-
         int min_copy = regions[i].min_line;
         if (min_copy > 0)
             min_copy--;
 
         int max_copy = regions[i].max_line;
-        if (max_line < (board_size - 1))
+        if (max_line < board_size)
             max_copy++;
 
+        cell_t* region_board[max_copy - min_copy];
+
         // we need the max_copy line aswell
-        for (int j = min_copy; j <= max_copy; j++)
+        for (int j = min_copy; j < max_copy; j++)
             region_board[i] = board[i];
 
         reg[i].lines = region_board;
