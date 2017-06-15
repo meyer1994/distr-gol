@@ -11,8 +11,6 @@ typedef unsigned char cell_t;
 // prototypes
 cell_t** allocate_board(int size);
 void free_board(cell_t** board, int size);
-inline int adjacent_to(cell_t** board, int size, int i, int j);
-void play(cell_t** board, cell_t** newboard, int size);
 void print(cell_t** board, int size);
 void read_file(FILE* f, cell_t** board, int size);
 

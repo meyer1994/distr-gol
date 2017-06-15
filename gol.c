@@ -1,19 +1,29 @@
 #include "utils.h"
 
-/**
- * @brief Region struct.
- *
- * This struct will be used to send the data needed for each process to perform
- * it's work.
- */
-typedef struct region {
-  // store the coordinates of the starting and end cells
-  int min_line;
-  int max_line;
+// default size to serialize ints
+#define INT_CHAR_SIZE 10
 
-  // contains the lines for the process to check
-  cell_t** lines;
+typedef struct region {
+    // coordinate of where to start calculations
+    int begin_x;
+    int begin_y;
+
+    // number of cells to calculate
+    int total_cells;
+
+    // the board where to do it
+    cell_t** board;
+    // board properties
+    int lines;
+    int columns;
 } region;
+
+
+inline int adjacent_to(cell_t** board, int size, int i, int j);
+unsigned char* int_to_char(int num);
+region* get_regions(cell_t** board, int board_size, int total_regions);
+unsigned char* serialize_region(region* reg, int* size);
+void play(cell_t** board, int size, int steps);
 
 
 int main(int argc, char** argv) {
@@ -37,15 +47,6 @@ int main(int argc, char** argv) {
         printf("Initial:\n");
         print(prev, size);
     #endif
-
-    MPI_Init(&argc, &argv);
-
-    for (int i = 0; i < steps; i++) {
-
-        MPI_Barrier(MPI_COMM_WORLD);
-    }
-
-    MPI_Finalize();
 
 
 
@@ -99,113 +100,143 @@ inline int adjacent_to(cell_t** board, int size, int i, int j) {
     return count;
 }
 
+/**
+ * @brief Simple function to convert a int into a string (char*).
+ *
+ * The size of the string/char* will be defined by the value in INT_CHAR_SIZE.
+ *
+ * @param num Int to be converted.
+ *
+ * @return Char array with the number.
+ */
+unsigned char* int_to_char(int num) {
+    unsigned char* c = malloc(sizeof(unsigned char) * INT_CHAR_SIZE);
+
+    sprintf(c, "%d", num);
+    return c;
+}
+
 
 /**
  * @brief Gets regions based on input board and sizes.
  *
- * This objects are used to pass the data needed between father and child
- * processes. Ps. this algorithm that I created is stupid. But it works...
+ * It will return an struct with the properties needed to pass to each process.
  *
- * @param board Regions depend on the board.
+ * @param board Board to get regions from.
  * @param board_size Self-explanatory.
  * @param total_regions Number of regions to return.
  *
- * @return Pointer to array of regions of size defined by the regions parameter.
+ * @return Pointer to array of regions of size defined by the total_regions
+ * parameter.
  */
 region* get_regions(cell_t** board, int board_size, int total_regions) {
+
     region* regions = malloc(sizeof(region) * total_regions);
 
-    // the first part of the algorithm takes the coordinates of each struct
+    // for some reason, sometimes the board size would misteriously change to 0
+    // so I assing the columns here first
+    for (int i = 0;  i < total_regions; i++)
+        regions[i].columns = board_size;
+
+    // sets regions' total cells
+    int total_cells = board_size * board_size;
+    int cells_per_region = total_cells / total_regions;
+    int remain_cells = total_cells % total_regions;
     for (int i = 0; i < total_regions; i++) {
-        regions[i].max_line = 0;
-        regions[i].min_line = 0;
+        regions[i].total_cells = cells_per_region;
+        if (remain_cells > 0) {
+            regions[i].total_cells++;
+            remain_cells--;
+        }
     }
 
-    int count = 0;
-    while (count < board_size) {
-        regions[count%total_regions].max_line++;
-        count++;
-    }
 
-    for (int i = 1; i < total_regions; i++) {
-        regions[i].min_line = regions[i-1].max_line;
-        regions[i].max_line += regions[i-1].max_line;
-    }
-
-    // this loop copies the board part into the struct
+    // sets beginning coordinates of each region
+    int cell_coord = 0;
     for (int i = 0; i < total_regions; i++) {
-        int min_copy = regions[i].min_line;
-        if (min_copy > 0)
-            min_copy--;
+        regions[i].begin_x = cell_coord % board_size;
+        regions[i].begin_y = cell_coord / board_size;
+        cell_coord += regions[i].total_cells;
+    }
 
-        int max_copy = regions[i].max_line;
-        if (max_line < board_size)
-            max_copy++;
 
-        cell_t* region_board[max_copy - min_copy];
 
-        // we need the max_copy line aswell
-        for (int j = min_copy; j < max_copy; j++)
-            region_board[i] = board[i];
+    // sets board, and board properties, for each region
+    for (int i = 0; i < total_regions; i++) {
+        // gets up border of board
+        int begin_line = regions[i].begin_y;
+        if (begin_line > 0)
+            begin_line--;
 
-        reg[i].lines = region_board;
+        // gets down border of board
+        int end_line = regions[i].begin_y + (regions[i].total_cells / regions[i].columns);
+        if (end_line < board_size)
+            end_line++;
+
+
+        // sets number of lines
+        regions[i].lines = end_line - begin_line;
+
+
+        // copies the board into the struct
+        cell_t** region_board = malloc(sizeof(cell_t*) * regions[i].lines * board_size);
+        for (int j = begin_line; j < end_line; j++)
+            region_board[j] = board[j];
+
+        regions[i].board = region_board;
+
+
+        // sets line properties to be based on the local board
+        regions[i].begin_y -= begin_line;
     }
 
     return regions;
 }
 
 /**
- * @brief 'Plays' the game of life.
+ * NOT FINISHED!!
+ * @brief Serialize the region.
  *
- * @param board Board to be analysed.
- * @param newboard Temporary board where the just calculated generation will be
- *    stored.
- * @param size Boards' size.
+ * @param reg Pointer to region to be serialized.
+ * @param size Pointer to int where to store the total_size of the serilized
+ *      array.
+ *
+ * @return Pointer to serialized array.
  */
- void play(cell_t** board, cell_t** newboard, int size, int steps) {
-    // get rank of process
-    int rank;
-    MPI_Comm_Rank(MPI_COMM_WORLD, &rank);
+unsigned char* serialize_region(region* reg, int* size) {
+    int total_size = reg->lines * reg->columns;  // board size
+    int ints_offset = 5 * INT_CHAR_SIZE;  // ints
+    total_size += ints_offset;
 
-    int size;
-    MPI_Comm_Size(MPI_COMM_WORLD, &size);
-    size--;  // to remove the parent process from the counting
+    unsigned char* serialized = malloc(sizeof(unsigned char) * total_size);
 
-    // parent
-    if (rank == 0) {
+    // convert ints to chars
+    unsigned char* min_line_c = int_to_char(reg->min_line);
+    unsigned char* max_line_c = int_to_char(reg->max_line);
+    unsigned char* lines_c = int_to_char(reg->lines);
+    unsigned char* columns_c = int_to_char(reg->columns);
 
-        // define ranges
-
-
-        // send signals for child processes
-        for (int i = 0; i < size; i++)
-            MPI_Send();
-
-        // switch
-        tmp = next;
-        next = prev;
-        prev = tmp;
-
-    // child
-    } else {
-        // more debug stuff
-        #ifdef DEBUG
-            printf("%d ----------\n", i + 1);
-            print(next, size);
-        #endif
+    // copies the converted ints to the char array
+    for (int i = 0; i < INT_CHAR_SIZE; i++) {
+        serialized[1 * INT_CHAR_SIZE + i] = min_line_c[i];
+        serialized[0 * INT_CHAR_SIZE + i] = max_line_c[i];
+        serialized[2 * INT_CHAR_SIZE + i] = lines_c[i];
+        serialized[3 * INT_CHAR_SIZE + i] = columns_c[i];
     }
 
-    for (int i = 0; i < size; i++)
-        for (int j = 0; j < size; j++) {
-            a = adjacent_to(board, size, i, j);
-            if (a == 2)
-                newboard[i][j] = board[i][j];
-            if (a == 3)
-                newboard[i][j] = 1;
-            if (a < 2)
-                newboard[i][j] = 0;
-            if (a > 3)
-                newboard[i][j] = 0;
-    }
+    // Dobby is freeeee!!
+    free(min_line_c);
+    free(max_line_c);
+    free(lines_c);
+    free(columns_c);
+
+    // i am so sorry for this...
+    for (int i = 0; i < reg->lines; i++)
+        for (int j = 0; j < reg->columns; j++)
+            serialized[ints_offset + (i * reg->columns) + j];
+
+    // set value and return
+    *size = total_size;
+    return serialized;
 }
 
