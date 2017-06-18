@@ -12,7 +12,7 @@ typedef struct region {
     int total_cells;
 
     // the board where to do it
-    cell_t** board;
+    cell_t* board;
     // board properties
     int lines;
     int columns;
@@ -41,6 +41,94 @@ int main(int argc, char** argv) {
 
     cell_t** next = allocate_board(size);
     cell_t** tmp;
+
+
+    MPI_Init(&argc, &argv);
+
+    int rank;
+    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+
+    int comm_size;
+    MPI_Comm_size(MPI_COMM_WORLD, &comm_size);
+
+
+    // master
+    if (rank == 0) {
+        region* regions = get_regions(prev, size, comm_size - 1);
+
+        while (steps > 0) {
+
+            // send everything
+            for (int i = 1; i < comm_size; i++) {
+                // 5 = num of ints in struct
+                int nums[5];
+                nums[0] = regions[i].begin_x;
+                nums[1] = regions[i].begin_y;
+                nums[2] = regions[i].total_cells;
+                nums[3] = regions[i].lines;
+                nums[4] = regions[i].columns;
+
+                int total_cells = regions[i].lines * regions[i].columns;
+                MPI_Send(nums, 5, MPI_INT, i, 0, MPI_COMM_WORLD);
+                MPI_Send(regions[i].board, total_cells, MPI_UNSIGNED_CHAR, i, 0, MPI_COMM_WORLD);
+
+                free(regions[i].board);
+                free(regions[i]);
+            }
+
+            // receive results TODO
+            for (int i = 1; i < comm_size; i++) {
+                int nums[5];
+                MPI_Recv(nums, 5, MPI_INT, i, MPI_COMM_WORLD);
+            }
+        }
+
+
+    // slave
+    } else {
+        while (steps > 0) {
+
+            region reg;
+
+            // receive region numbers
+            int nums[5];
+            MPI_Recv(nums, 5, MPI_INT, 0, 0, MPI_COMM_WORLD);
+            reg.begin_x = nums[0];
+            reg.begin_y = nums[1];
+            reg.total_cells = nums[2];
+            reg.lines = nums[3];
+            reg.columns = nums[4];
+
+            // receive serialized board
+            MPI_Status st;
+            cell_t board[reg.total_cells];
+            MPI_Recv(cell_t, total_cells, MPI_UNSIGNED_CHAR, 0, MPI_COMM_WORLD, &st);
+            reg.board = board;
+
+            // pass the serialized board to a matrix
+            cell_t temp[reg.lines][reg.columns];
+            cell_t real_board[reg.lines][reg.columns];
+            for (int i = 0; i < reg.total_cells; i++)
+                real_board[i / reg.lines][i % reg.lines];
+
+            // do the game thingy
+            for (int i = 0;  i < reg.lines; i++)
+                for (int j = 0; j < reg.columns; j++) {
+                    int a = adjacent_to(prev, size, i, j);
+                    if (a < 2 || a > 3)
+                        next[i][j] = 0;
+                    if (a == 2)
+                        next[i][j] = prev[i][j];
+                    if (a == 3)
+                        next[i][j] = 1;
+                }
+
+
+        }
+    }
+
+
+    MPI_Finalize();
 
     // debug stuff
     #ifdef DEBUG
@@ -178,10 +266,12 @@ region* get_regions(cell_t** board, int board_size, int total_regions) {
         regions[i].lines = end_line - begin_line;
 
 
-        // copies the board into the struct
-        cell_t** region_board = malloc(sizeof(cell_t*) * regions[i].lines * board_size);
+        // copies the board (serialized) into the struct
+        cell_t* region_board = malloc(sizeof(cell_t) * regions[i].lines * regions[i].columns);
         for (int j = begin_line; j < end_line; j++)
-            region_board[j] = board[j];
+            for (int k = 0; k < regions[i].columns; k++) {
+                region_board[(j % regions[i].lines) * regions[i].columns + k] = board[j][k];
+            }
 
         regions[i].board = region_board;
 
@@ -240,3 +330,17 @@ unsigned char* serialize_region(region* reg, int* size) {
     return serialized;
 }
 
+void play(cell_t** board, cell_t** newboard, int size) {
+  for (int i = 0; i < size; i++)
+    for (int j = 0; j < size; j++) {
+      int a = adjacent_to(board, size, i, j);
+      if (a == 2)
+        newboard[i][j] = board[i][j];
+      if (a == 3)
+        newboard[i][j] = 1;
+      if (a < 2)
+        newboard[i][j] = 0;
+      if (a > 3)
+        newboard[i][j] = 0;
+    }
+}
