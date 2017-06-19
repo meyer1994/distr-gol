@@ -9,15 +9,15 @@ typedef unsigned char cell_t;
 
 
 // prototypes
-cell_t** allocate_board(int size);
+cell_t** allocate_board(int lines, int cols);
 void free_board(cell_t** board, int size);
 void print(cell_t** board, int size);
 void read_file(FILE* f, cell_t** board, int size);
 
-cell_t** allocate_board(int size) {
-  cell_t** board = (cell_t**) malloc(sizeof(cell_t*) * size);
-  for (int i = 0; i < size; i++)
-    board[i] = (cell_t *) malloc(sizeof(cell_t) * size);
+cell_t** allocate_board(int lines, int cols) {
+  cell_t** board = (cell_t**) malloc(sizeof(cell_t*) * lines);
+  for (int i = 0; i < lines; i++)
+      board[i] = (cell_t *) malloc(sizeof(cell_t) * cols);
   return board;
 }
 
