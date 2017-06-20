@@ -117,33 +117,26 @@ int main(int argc, char** argv) {
             free(r.serial_board);
         }
 
-
         // allocate borders
-        cell_t** borders = malloc(sizeof(cell_t*) * (comm_size - 1));
-        for (int i = 1; i < comm_size; i++) {
-            // border regions
-            if (i == 1 || i == (comm_size - 1))
-                borders[i] = malloc(sizeof(cell_t) * board_size);
-            else
-                borders[i] = malloc(sizeof(cell_t) * board_size * 2);
-        }
+        cell_t** borders = allocate_board(comm_size - 1, board_size * 2);
 
         // receive borders
         MPI_Status st;
         for (int i = 1; i < comm_size; i++)
-            MPI_Recv(borders[i], board_size * 2, MPI_UNSIGNED_CHAR, i, 0, MPI_COMM_WORLD, &st);
+            MPI_Recv(borders[i - 1], board_size * 2, MPI_UNSIGNED_CHAR, i, 0, MPI_COMM_WORLD, &st);
 
 
        // send borders
        for (int i = 1; i < comm_size; i++) {
             // border regions
             if (i == 1 || i == (comm_size - 1))
-                MPI_Send(borders[i], board_size, MPI_UNSIGNED_CHAR, i, MPI_COMM_WORLD);
+                MPI_Send(borders[i-1], board_size, MPI_UNSIGNED_CHAR, i, 0, MPI_COMM_WORLD);
             else
-                MPI_Send(borders[i], board_size*2, MPI_UNSIGNED_CHAR, i, MPI_COMM_WORLD);
-            free(borders[i]);
+                MPI_Send(borders[i-1], board_size*2, MPI_UNSIGNED_CHAR, i, 0, MPI_COMM_WORLD);
+            free(borders[i-1]);
        }
        free(borders);
+       steps--;
 
 
 
@@ -167,7 +160,6 @@ int main(int argc, char** argv) {
         cell_t** board = prepare_board(reg_s);
         cell_t** temp_board = allocate_board(reg_s.lines + 2, reg_s.cols + 2);
 
-
         // do the game thingy
         for (int i = 2;  i < reg_s.lines; i++)
             for (int j = 2; j < reg_s.cols; j++) {
@@ -185,7 +177,7 @@ int main(int argc, char** argv) {
             cell_t borders[reg_s.cols * 2];
             for (int i = 1; i <= reg_s.cols; i++) {
                 borders[i - 1] = temp_board[2][i];
-                borders[i - 1 + reg_s.cols] = temp_board[reg_s.lines - 1];
+                borders[i - 1 + reg_s.cols] = temp_board[reg_s.lines - 1][i];
             }
             MPI_Send(borders, reg_s.cols * 2, MPI_UNSIGNED_CHAR, 0, 0, MPI_COMM_WORLD);
 
@@ -195,7 +187,7 @@ int main(int argc, char** argv) {
                 if (rank == 1)
                     borders[i - 1] = temp_board[2][i];
                 else
-                    borders[i - 1 + reg_s.cols] = temp_board[reg_s.lines - 1];
+                    borders[i - 1 + reg_s.cols] = temp_board[reg_s.lines - 1][i];
             }
             MPI_Send(borders, reg_s.cols, MPI_UNSIGNED_CHAR, 0, 0, MPI_COMM_WORLD);
         }
@@ -203,18 +195,32 @@ int main(int argc, char** argv) {
         // receive borders
         if (rank > 1 && rank < (comm_size - 1)) {
             cell_t borders[reg_s.cols * 2];
-            MPI_Recv(borders, reg_s.cols * 2, MPI_UNSIGNED_CHAR, , 0, MPI_COMM_WORLD, &st);
+            MPI_Recv(borders, reg_s.cols * 2, MPI_UNSIGNED_CHAR, 0, 0, MPI_COMM_WORLD, &st);
 
+            // copy borders to boards
             for (int i = 0; i < reg_s.cols; i++) {
                 temp_board[1][i] = borders[i];
-                temp_board[reg_s.lines - 2] = borders[i + reg_s.cols];
+                temp_board[reg_s.lines - 2][i] = borders[i + reg_s.cols];
             }
 
         } else {
             cell_t border[reg_s.cols];
-            MPI_Recv(borders, reg_s.cols, MPI_UNSIGNED_CHAR, , 0, MPI_COMM_WORLD, &st);
+            MPI_Recv(border, reg_s.cols, MPI_UNSIGNED_CHAR, 0, 0, MPI_COMM_WORLD, &st);
 
+            // copy border into board
+            for (int i = 0; i < reg_s.cols; i++)
+                if (rank == 1)
+                    temp_board[1][i] = border[i];
+                else
+                    temp_board[reg_s.lines - 2][i] = border[i];
         }
+
+        // switch boards
+        cell_t** t = temp_board;
+        temp_board = board;
+        board = temp_board;
+
+        steps--;
     }
 
 
