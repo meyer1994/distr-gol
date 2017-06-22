@@ -25,7 +25,7 @@ void read_file(FILE* f, cell_t** board, int size) {
 void print_board(cell_t** board, int lines, int cols) {
     for (int j = 0; j < lines; j++) {
         for (int i = 0; i < cols; i++)
-            printf("%c", board[j][i] ? 'x' : '-');
+            printf("%s", board[j][i] ? "x " : "- ");
         printf("|\n");
     }
 }
