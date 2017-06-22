@@ -7,12 +7,6 @@ cell_t** allocate_board(int lines, int cols) {
     return board;
 }
 
-void free_board(cell_t** board, int size) {
-    for (int i = 0; i < size; i++)
-        free(board[i]);
-    free(board);
-}
-
 
 void read_file(FILE* f, cell_t** board, int size) {
     char* s = (char*) malloc(size + 10);
