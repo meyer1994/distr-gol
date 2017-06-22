@@ -80,11 +80,6 @@ inline int get_total_borders(int rank, int comm_size) {
 }
 
 
-void send_borders() {
-
-}
-
-
 int main(int argc, char** argv) {
 
     MPI_Init(&argc, &argv);
@@ -273,45 +268,43 @@ int main(int argc, char** argv) {
             play(board, temp, lines, cols, start_line, end_line);
 
 
+            // debug
+            // printf("Child %d without new borders\n", rank);
+            // print_board(temp, lines+2, cols+2);
+
+
             // send borders
-            cell_t* top_border;
-            cell_t* bottom_border;
             MPI_Request borders_req[2];
             MPI_Status borders_st[2];
 
-            if (rank > 1) {
-                top_border = temp[2];
-                MPI_Isend(top_border, cols+2, MPI_UNSIGNED_CHAR, rank-1, 0, MPI_COMM_WORLD, &borders_req[0]);
-            }
-
-            if (rank < comm_size-1) {
-                bottom_border = temp[lines-1];
-                MPI_Isend(bottom_border, cols+2, MPI_UNSIGNED_CHAR, rank+1, 0, MPI_COMM_WORLD, &borders_req[1]);
-            }
-
-
-            printf("\n\n\n\n\nAEIOU!!!!! %d \n\n\n\n\n", rank);
-
+            // send borders
+            if (rank > 1)
+                MPI_Isend(temp[2], cols+2, MPI_UNSIGNED_CHAR, rank-1, 0, MPI_COMM_WORLD, &borders_req[0]);
+            if (rank < comm_size-1)
+                MPI_Isend(temp[lines-1], cols+2, MPI_UNSIGNED_CHAR, rank+1, 0, MPI_COMM_WORLD, &borders_req[1]);
 
             // receive borders
-            if (rank > 1) {
-                // cell_t recv_top[cols+2];
-                MPI_Recv(temp[2], cols+2, MPI_UNSIGNED_CHAR, rank-1, 0, MPI_COMM_WORLD, &borders_st[0]);
-                // memcpy(temp[1], recv_top, cols+2);
-
-            }
-
-            if (rank < comm_size-1) {
-                // cell_t recv_bottom[cols+2];
+            if (rank > 1)
+                MPI_Recv(temp[1], cols+2, MPI_UNSIGNED_CHAR, rank-1, 0, MPI_COMM_WORLD, &borders_st[0]);
+            if (rank < comm_size-1)
                 MPI_Recv(temp[lines], cols+2, MPI_UNSIGNED_CHAR, rank+1, 0, MPI_COMM_WORLD, &borders_st[1]);
-                // memcpy(temp[lines], recv_bottom, cols+2);
-            }
+
+            // wait for other processes to receive info
+            if (rank > 1)
+                MPI_Wait(&borders_req[0], &borders_st[0]);
+            if (rank < comm_size-1)
+                MPI_Wait(&borders_req[1], &borders_st[1]);
 
 
-            MPI_Wait(&borders_req[0], &borders_st[0]);
-            MPI_Wait(&borders_req[1], &borders_st[1]);
+            // debug
+            // printf("Child %d board after with new borders\n", rank);
+            // print_board(temp, lines+2, cols+2);
 
-            break;
+            // switch time
+            cell_t** t = board;
+            board = temp;
+            temp = t;
+
             steps--;
         }
     }
