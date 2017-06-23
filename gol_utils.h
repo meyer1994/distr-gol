@@ -95,35 +95,39 @@ void free_matrix(void** matrix, int lines) {
  * each of this regions is returned by the function
  * 'get_sending_regions_dimensions'.
  */
-cell_t*** get_sending_regions(cell_t** board, int lines, int cols, int regions) {
-    cell_t*** boards = malloc(sizeof(cell_t**) * regions);
+cell_t** get_sending_regions(cell_t** board, int lines, int cols, int regions) {
+    cell_t** boards = malloc(sizeof(cell_t*) * regions);
     int** dims = get_sending_region_dimensions(lines, cols, regions);
 
     int region_start = 0;
 
     // top region (+1) for the top border of this region
-    boards[0] = malloc(sizeof(cell_t*) * dims[0][0]);
-    for (int i = 0; i < dims[0][0]; i++) {
-        boards[0][i] = malloc(sizeof(cell_t) * dims[0][1]);
-        memcpy(boards[0][i], board[i], dims[0][1]);
-    }
+    int first_region_cells = dims[0][0] * dims[0][1];
+    boards[0] = malloc(sizeof(cell_t) * first_region_cells);
+    for (int i = 0; i < dims[0][0]; i++)
+        for (int j = 0; j < dims[0][1]; j++)
+            boards[0][i * dims[0][1] + j] = board[i][j];
     region_start += dims[0][0]-1;
 
-    for (int i = 1; i < regions - 1; i++) {
-        boards[i] = malloc(sizeof(cell_t*) * dims[i][0]);
 
-        for (int j = 0; j < dims[i][0]; j++) {
-            boards[i][j] = malloc(sizeof(cell_t) * dims[i][1]);
-            memcpy(boards[i][j], board[region_start+j-1], dims[i][1]);
-        }
+    for (int i = 1; i < regions - 1; i++) {
+        int region_cells = dims[i][0] * dims[i][1];
+        boards[i] = malloc(sizeof(cell_t) * region_cells);
+
+        for (int j = 0; j < dims[i][0]; j++)
+            for (int k = 0; k < dims[i][1]; k++)
+                boards[i][(j * dims[i][1]) + k] = board[region_start+j-1][k];
+
         region_start += dims[i][0]-1;
     }
 
-    boards[regions-1] = malloc(sizeof(cell_t*) * dims[regions-1][0]);
-    for (int i = 0; i < dims[regions-1][0]; i++) {
-        boards[regions-1][i] = malloc(sizeof(cell_t) * dims[regions-1][1]);
+    int last_i = regions-1;
+    int last_region_cells = dims[last_i][0] * dims[last_i][1];
+    boards[last_i] = malloc(sizeof(cell_t) * last_region_cells);
+    for (int i = 0; i < dims[last_i][0]; i++) {
+        for (int j = 0; j < dims[last_i][1]; j++)
         // very ugly coordinates...
-        memcpy(boards[regions-1][i], board[lines-dims[regions-1][0]+i], dims[regions-1][1]);
+        boards[last_i][(i * dims[0][1]) + j] = board[lines-dims[last_i][0]+i][j];
     }
 
     // free the dims 2d array
@@ -209,26 +213,6 @@ cell_t** allocate_borders(int regions, int cols) {
 
     for (int i = 1; i < regions-1; i++)
         borders[i] = malloc(sizeof(cell_t) * 2 * cols);
-}
-
-
-/**
- * It will sedn to everybody, except master.
- *
- * @param buff Pointer to data to send.
- * @param buff_size Size of the data to send.
- * @param comm_size Size of the comm, including master.
- *
- * @returns Pointer to array of request to be used later in an MPI_Wait.
- */
-MPI_Request* send_to_all_non_blocking(int* buff, int buff_size, int comm_size) {
-    MPI_Request* reqs = malloc(sizeof(MPI_Request) * comm_size-1);
-    for (int i = 0; i < comm_size-1; i++) {
-        int dest = i + 1;
-        MPI_Isend(buff, buff_size, MPI_INT, dest, 0, MPI_COMM_WORLD, &reqs[i]);
-    }
-
-    return reqs;
 }
 
 
