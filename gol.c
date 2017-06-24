@@ -210,13 +210,13 @@ void play(cell_t** board, cell_t** newboard, int lines, int cols) {
     for (int i = 1; i < lines-1; i++) {
         for (int j = 1; j < cols-1; j++) {
             int a = adjacent_to(board, i, j);
-            if (a == 2)
-                newboard[i][j] = board[i][j];
-            if (a == 3)
-                newboard[i][j] = 1;
             if (a < 2)
                 newboard[i][j] = 0;
-            if (a > 3)
+            else if (a == 2)
+                newboard[i][j] = board[i][j];
+            else if (a == 3)
+                newboard[i][j] = 1;
+            else
                 newboard[i][j] = 0;
         }
     }
