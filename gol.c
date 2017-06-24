@@ -1,303 +1,283 @@
-#include <stdlib.h>
-#include <string.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <mpi.h>
 
-#include "gol_utils.h"
+typedef unsigned char cell_t;
 
 
-/**
- * @brief Checks for alive cells around the coordinate.
- *
- * TODO: some performance improvment
- *
- * @param board Matrix to check upon.
- * @param size Matrix' size.
- * @param i Line coordinate.
- * @param j Column coordinate.
- *
- * @return Total alive cells around coordinate.
- */
-inline int adjacent_to(cell_t** board, int i, int j) {
+// prototypes
+cell_t** allocate_board(int size);
+void free_board(cell_t** board, int size);
+inline int adjacent_to(cell_t** board, int size, int i, int j);
+void play(cell_t** board, cell_t** newboard, int size);
+void print(cell_t** board, int size);
+void read_file(FILE* f, cell_t** board, int size);
+
+int* get_ranges(int lines, int regions) {
+    int* r = malloc(sizeof(int) * regions * 2);
+
+    int reg_lines = lines / regions;
+    int rem_lines = lines % regions;
+    int counter = 0;
+
+    for (int i = 0; i < regions; i++) {
+        int begin_line = counter;
+        int end_line = counter + reg_lines;
+
+        if (rem_lines > 0) {
+            rem_lines--;
+            end_line++;
+        }
+        r[2*i] = begin_line;
+        r[2*i+1] = end_line;
+
+        counter = end_line;
+    }
+
+    return r;
+}
+
+int* get_real_ranges(int lines, int regions) {
+    int* r_ranges = get_ranges(lines, regions);
+
+    for (int i = 0; i < regions; i++) {
+        int start_line = r_ranges[i*2];
+        int end_line = r_ranges[i*2+1];
+
+        if (start_line - 1 > 0)
+            start_line--;
+        if (end_line + 1 < lines)
+            end_line++;
+
+        r_ranges[i*2] = start_line;
+        r_ranges[i*2+1] = end_line;
+    }
+
+    return r_ranges;
+}
+
+cell_t* serialize_board(cell_t** board, int lines, int cols) {
+    int cells = lines * cols;
+
+    cell_t* serial = malloc(sizeof(cell_t) * cells);
+
+    for (int i = 0; i < lines; i++)
+        for (int j = 0; j < cols; j++)
+            serial[i*cols+j] = board[i][j];
+
+    return serial;
+}
+
+int main(int argc, char *argv[]) {
+
+    MPI_Init(&argc, &argv);
+
+    int c_rank;
+    MPI_Comm_rank(MPI_COMM_WORLD, &c_rank);
+
+    int c_size;
+    MPI_Comm_size(MPI_COMM_WORLD, &c_size);
+
+    int b_steps;
+    int b_size;
+
+    cell_t** m_board;
+
+    // ========================================================================
+
+    // read file
+    if (c_rank == 0) {
+        FILE* f_board = stdin;
+        fscanf(f_board, "%d %d", &b_size, &b_steps);
+
+        m_board = allocate_board(b_size);
+
+        read_file(f_board, m_board, b_size);
+
+        fclose(f_board);
+    }
+
+    MPI_Bcast(&b_steps, 1, MPI_INT, 0, MPI_COMM_WORLD);
+    MPI_Bcast(&b_size, 1, MPI_INT, 0, MPI_COMM_WORLD);
+    #ifdef DEBUG
+        MPI_Barrier(MPI_COMM_WORLD);
+        if (c_rank == 0)
+            printf("\n");
+        printf("P%d received b_steps (%d) from root\n", c_rank, b_steps);
+    #endif
+
+    // ========================================================================
+
+    // get ranges
+    int* b_ranges;
+    if (c_rank == 0)
+        b_ranges = get_ranges(b_size, c_size);
+
+    int p_range[2];
+    MPI_Scatter(b_ranges, 2, MPI_INT, p_range, 2, MPI_INT, 0, MPI_COMM_WORLD);
+
+    if (c_rank == 0)
+        free(b_ranges);
+    #ifdef DEBUG
+        MPI_Barrier(MPI_COMM_WORLD);
+        if (c_rank == 0)
+            printf("\n");
+        printf("P%d received b_ranges (%5d, %5d) from root\n", c_rank, p_range[0], p_range[1]);
+    #endif
+
+    // ========================================================================
+
+    // get real ranges
+    int* b_real_ranges;
+    if (c_rank == 0)
+        b_real_ranges = get_real_ranges(b_size, c_size);
+
+    int p_real_ranges[2];
+    MPI_Scatter(b_real_ranges, 2, MPI_INT, p_real_ranges, 2, MPI_INT, 0, MPI_COMM_WORLD);
+    #ifdef DEBUG
+        MPI_Barrier(MPI_COMM_WORLD);
+        if (c_rank == 0)
+            printf("\n");
+        printf("P%d received p_real_ranges (%4d, %4d) from root\n", c_rank, p_real_ranges[0], p_real_ranges[1]);
+    #endif
+
+    // ========================================================================
+
+    int s_board_offs[c_size];
+    int s_board_cnts[c_size];
+    cell_t* s_board;
+    if (c_rank == 0) {
+        s_board = serialize_board(m_board, b_size, b_size);
+        for (int i = 0; i < c_size; i++) {
+            s_board_offs[i] = b_real_ranges[i*2] * b_size;
+
+            int r_lines = b_real_ranges[i*2+1] - b_real_ranges[i*2];
+            s_board_cnts[i] = r_lines * b_size;
+        }
+    }
+
+    #ifdef DEBUG
+        MPI_Barrier(MPI_COMM_WORLD);
+        if (c_rank == 0) {
+            printf("\n");
+            for (int i = 0; i < c_size; i++)
+                printf("P%d (offs = %4d) + (cnts = %4d) = %4d\n", i, s_board_offs[i], s_board_cnts[i], s_board_offs[i] + s_board_cnts[i]);
+        }
+    #endif
+
+    int p_lines = p_real_ranges[1] - p_real_ranges[0];
+    int p_cells = p_lines * b_size;
+    cell_t* p_board = malloc(sizeof(cell_t) * p_cells);
+    MPI_Scatterv(s_board, s_board_cnts, s_board_offs, MPI_UNSIGNED_CHAR, p_board, p_cells, MPI_UNSIGNED_CHAR, 0, MPI_COMM_WORLD);
+
+    #ifdef DEBUG
+        MPI_Barrier(MPI_COMM_WORLD);
+        printf("\n");
+        printf("P%d received p_board from root\n", c_rank);
+        for (int i = 0; i < p_lines; i++) {
+            for (int j = 0; j < b_size; j++)
+                printf ("%s", p_board[i*b_size+j] ? "x " : "- ");
+            printf("| %d\n", c_rank);
+        }
+    #endif
+
+    // ========================================================================
+
+
+    // for (int i = 0; i < steps; i++) {
+    // play(prev, next, size);
+    // #ifdef DEBUG
+    // printf("%d ----------\n", i + 1);
+    // print(next, size);
+    // #endif
+    // tmp = next;
+    // next = prev;
+    // prev = tmp;
+    // }
+
+    // #ifdef RESULT
+    //     printf("Final:\n");
+    //     print (prev,size);
+    // #endif
+
+    // free_board(prev,size);
+    // free_board(next,size);
+
+    MPI_Finalize();
+}
+
+cell_t** allocate_board(int size) {
+    cell_t** board = (cell_t**) malloc(sizeof(cell_t*) * size);
+    for (int i = 0; i < size; i++)
+        board[i] = (cell_t *) malloc(sizeof(cell_t) * size);
+    return board;
+}
+
+void free_board(cell_t** board, int size) {
+    for (int i = 0; i < size; i++)
+        free(board[i]);
+    free(board);
+}
+
+inline int adjacent_to(cell_t** board, int size, int i, int j) {
     int count = 0;
-    // top
-    count += board[i-1][j-1];
-    count += board[i-1][j];
-    count += board[i-1][j+1];
+    if (i-1 > 0) {
+        count += board[i-1][j];
+        if (j - 1 > 0)
+            count += board[i-1][j-1];
+        if (j+1 < size)
+            count += board[i-1][j+1];
+    }
 
-    // left
-    count += board[i][j-1];
-    // right
-    count += board[i][j+1];
+    if (j-1 > 0) {
+        count += board[i][j-1];
+        if (i+1 < size)
+            count += board[i+1][j-1];
+    }
 
-    // bottom
-    count += board[i+1][j-1];
-    count += board[i+1][j];
-    count += board[i+1][j+1];
+    if (i+1 < size) {
+        count += board[i+1][j];
+        if (j+1 < size)
+            count += board[i+1][j+1];
+    }
+
+    if (j+1 < size)
+        count += board[i][j+1];
 
     return count;
 }
 
-
-/**
- * @brief Play the Game of Life.
- *
- * This function assumes that our boards have 2 more lines and columns. This
- * extra lines and columns are used as a 0 border so that we can bypass the
- * many board limit checks to do the calculations.
- *
- * @param curr Current board.
- * @param temp Tempo board. Where the new state of the game will be saved.
- * @param lines Num of lines of the original, without 0 borders, board.
- * @param cols Same as lines, but for the columns.
- * @param start_line It is used to limit the start of the calculations, because,
- *      sometimes, depending on the region (first or last), the regions will
- *      need to use some other lines.
- * @param end_line Same as the start_line, but for the end of the region.
- *
- * @returns Saves the new board state into the temp board.
- */
-void play(cell_t** curr, cell_t** temp, int lines, int cols, int start_line, int end_line) {
-    // do the game thingy
-    for (int i = start_line;  i < end_line; i++)
-        for (int j = 1; j <= cols; j++) {
-            int a = adjacent_to(curr, i, j);
-            if (a < 2 || a > 3)
-                temp[i][j] = 0;
-            else if (a == 3)
-                temp[i][j] = 1;
-            else if (a == 2)
-                temp[i][j] = curr[i][j];
-        }
+void play(cell_t** board, cell_t** newboard, int size) {
+  int	a;
+  /* for each cell, apply the rules of Life */
+    for (int i = 0; i < size; i++)
+        for (int j = 0; j < size; j++) {
+            a = adjacent_to(board, size, i, j);
+            if (a == 2)
+                newboard[i][j] = board[i][j];
+            if (a == 3)
+                newboard[i][j] = 1;
+            if (a < 2)
+                newboard[i][j] = 0;
+            if (a > 3)
+                newboard[i][j] = 0;
+    }
 }
 
-
-inline int get_total_borders(int rank, int comm_size) {
-    int total_borders = 2;
-    if (rank == 1 || rank == comm_size-1)
-        return 1;
-    return total_borders;
+void print(cell_t** board, int size) {
+    for (int j = 0; j < size; j++) {
+        for (int i = 0; i < size; i++)
+            printf ("%c", board[i][j] ? 'x' : ' ');
+        printf ("\n");
+    }
 }
 
-
-int main(int argc, char** argv) {
-
-    MPI_Init(&argc, &argv);
-
-    int rank;
-    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
-
-    int comm_size;
-    MPI_Comm_size(MPI_COMM_WORLD, &comm_size);
-
-
-    if (rank == 0) {
-        int steps;
-        int board_size;
-        FILE* f = stdin;
-        fscanf(f, "%d %d", &board_size, &steps);
-
-        // broadcast steps
-        MPI_Request steps_req;
-        MPI_Ibcast(&steps, 1, MPI_INT, 0, MPI_COMM_WORLD, &steps_req);
-
-        cell_t** current = allocate_board(board_size, board_size);
-        cell_t** next;
-
-        read_file(f, current, board_size);
-        fclose(f);
-
-
-        // debug stuff
-        #ifdef DEBUG
-            printf("Initial:\n";
-            print_board(current, board_size);
-        #endif
-
-
-        // get dimensions
-        int** dims = get_sending_region_dimensions(board_size, board_size, comm_size-1);
-        // send board dimensions to everybody
-        MPI_Request dim_reqs[comm_size-1];
-        for (int i = 0; i < comm_size-1; i++) {
-            int dest = i + 1;
-            printf("(%d, %d)\n", dims[i][0], dims[i][1]);
-            MPI_Isend(dims[i], 2, MPI_INT, dest, 0, MPI_COMM_WORLD, &dim_reqs[i]);
-        }
-
-
-        // separate board
-        cell_t** regions = get_sending_regions(current, board_size, board_size, comm_size-1);
-
-
-        // // send board to children
-        // for (int i = 0; i < comm_size-1; i++) {
-        //     // wait for the process we are sending to have
-        //     // the board dimensions already
-        //     MPI_Status st;
-        //     MPI_Wait(&dim_reqs[i], &st);
-
-        //     // send board itself
-        //     int dest = i + 1;
-        //     int cells = dims[i][0] * dims[i][1];
-        //     MPI_Send(serial_board, cells, MPI_UNSIGNED_CHAR, dest, 0, MPI_COMM_WORLD);
-
-        //     // free things
-        //     free_matrix((void**) regions[i], dims[i][0]);
-        //     free(serial_board);
-        // }
-
-
-        // cell_t** final_region = malloc(sizeof(cell_t*) * comm_size-1);
-        // for (int i = 0; i < comm_size-1; i++)
-        //     final_region[i] = calloc(dims[i][1] + 2, sizeof(cell_t));
-
-
-        // for (int i = 0; i < comm_size-1; i++) {
-        //     int cells = dims[i][0] * dims[i][1];
-        //     cell_t final_region[cells];
-
-        //     int dest = i + 1;
-
-        //     MPI_Status recv_st;
-        //     MPI_Recv(final_region, cells, MPI_UNSIGNED_CHAR, dest, 0, MPI_COMM_WORLD, &recv_st);
-
-
-            // first region
-            // int start_line = 2;
-            // if (rank == 1)
-            //     start_line = 1;
-            // // last region
-            // int end_line = dims[i][0];
-            // if (rank == comm_size-1)
-            //     end_line = dims[i][0] - 1;
-
-            // for (int j = start_line; j < end_line; j++) {
-            //     for (int k = 1; k <= dims[i][1]; k++)
-            //         printf("%c", final_region[j * dims[i][1] + k] ? 'x' : '-');
-            //     printf("\n");
-            // }
-        }
-
-        // free_matrix((void**) prev, board_size);
-        // free_matrix((void**) next, board_size);
-
-    // slave
-    // } else {
-
-    //     // receive steps
-    //     int steps;
-    //     MPI_Bcast(&steps, 1, MPI_INT, 0, MPI_COMM_WORLD);
-
-
-    //     // receive board sizes and steps to perform
-    //     int dims[2];
-    //     MPI_Status dims_st;
-    //     MPI_Recv(dims, 2, MPI_INT, 0, 0, MPI_COMM_WORLD, &dims_st);
-
-    //     // for better readability
-    //     int lines = dims[0];
-    //     int cols = dims[1];
-
-
-    //     // allocate temp board with all zeroes
-    //     cell_t** temp = malloc(sizeof(cell_t*) * (lines + 2));
-    //     for (int i = 0; i < lines + 2; i++)
-    //         temp[i] = calloc(cols+2, sizeof(cell_t));
-
-    //     // receive board
-    //     MPI_Status board_st;
-    //     int total_cells = lines * cols;
-    //     cell_t* serial_board = malloc(sizeof(cell_t) * total_cells);
-    //     MPI_Recv(serial_board, total_cells, MPI_UNSIGNED_CHAR, 0, 0, MPI_COMM_WORLD, &board_st);
-
-
-    //     cell_t** board = prepare_board(serial_board, lines, cols);
-    //     free(serial_board);
-
-    //     // first region
-    //     int start_line = 2;
-    //     if (rank == 1)
-    //         start_line = 1;
-    //     // last region
-    //     int end_line = lines;
-    //     if (rank == comm_size-1)
-    //         end_line = lines - 1;
-
-    //     int total_borders = get_total_borders(rank, comm_size);
-
-
-    //     // real parallel part
-    //     while (steps > 0) {
-
-    //         play(board, temp, lines, cols, start_line, end_line);
-
-
-    //         // send borders
-    //         MPI_Request borders_req[2];
-    //         MPI_Status borders_st[2];
-
-    //         // send borders
-    //         if (rank > 1)
-    //             MPI_Isend(temp[2], cols+2, MPI_UNSIGNED_CHAR, rank-1, 0, MPI_COMM_WORLD, &borders_req[0]);
-    //         if (rank < comm_size-1)
-    //             MPI_Isend(temp[lines-1], cols+2, MPI_UNSIGNED_CHAR, rank+1, 0, MPI_COMM_WORLD, &borders_req[1]);
-
-    //         // receive borders
-    //         if (rank > 1)
-    //             MPI_Recv(temp[1], cols+2, MPI_UNSIGNED_CHAR, rank-1, 0, MPI_COMM_WORLD, &borders_st[0]);
-    //         if (rank < comm_size-1)
-    //             MPI_Recv(temp[lines], cols+2, MPI_UNSIGNED_CHAR, rank+1, 0, MPI_COMM_WORLD, &borders_st[1]);
-
-    //         // wait for other processes to receive info
-    //         if (rank > 1)
-    //             MPI_Wait(&borders_req[0], &borders_st[0]);
-    //         if (rank < comm_size-1)
-    //             MPI_Wait(&borders_req[1], &borders_st[1]);
-
-
-    //         // debug
-    //         // printf("Child %d board after with new borders\n", rank);
-    //         // print_board(temp, lines+2, cols+2);
-
-    //         // switch time
-    //         cell_t** t = board;
-    //         board = temp;
-    //         temp = t;
-
-    //         // break;
-    //         steps--;
-    //     }
-
-
-    //     // deserialize board
-    //     cell_t final_board[total_cells];
-    //     for (int i = 0; i < lines; i++)
-    //         for (int j = 0; j < cols; j++)
-    //             final_board[i*cols + j] = board[i+1][j+1];
-
-    //     // send everything
-    //     MPI_Request final_req;
-    //     MPI_Isend(final_board, total_cells, MPI_UNSIGNED_CHAR, 0, 0, MPI_COMM_WORLD, &final_req);
-    //     free_matrix((void**) board, lines+2);
-    //     free_matrix((void**) temp, lines+2);
-
-    //     // wait for send and end
-    //     MPI_Status final_st;
-    //     MPI_Wait(&final_req, &final_st);
-    // }
-
-
-
-    MPI_Finalize();
-
-
-
-
-    // // #ifdef RESULT
-    // //     printf("Final:\n");
-    // //     print_board (prev, board_size);
-    // // #endif
-
-
+void read_file(FILE* f, cell_t** board, int size) {
+    char* s = (char*) malloc(size + 10);
+    fgets(s, size + 10, f);
+    for (int j = 0; j < size; j++) {
+        fgets (s, size + 10, f);
+        for (int i = 0; i < size; i++)
+            board[i][j] = s[i] == 'x';
+    }
 }
