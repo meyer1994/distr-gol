@@ -7,12 +7,11 @@ typedef unsigned char cell_t;
 
 
 // prototypes
-int* get_ranges(int lines, int regions);
-cell_t** allocate_board(int lines, int cols);
-int* get_real_ranges(int lines, int regions);
-void read_file(FILE* f, cell_t* board, int size);
 void free_board(cell_t** board, int lines);
+cell_t** allocate_board(int lines, int cols);
+void read_file(FILE* f, cell_t* board, int size);
 inline int adjacent_to(cell_t** board, int i, int j);
+int* get_range(int lines, int rank, int size);
 cell_t* serialize_board(cell_t** board, int lines, int cols);
 void print_board(cell_t** board, int lines, int cols, int rank);
 void play(cell_t** board, cell_t** newboard, int lines, int cols);
@@ -59,34 +58,13 @@ int main(int argc, char *argv[]) {
 
     // ========================================================================
 
-    // get ranges
-    int* send_ranges;
-    if (c_rank == 0)
-        send_ranges = get_ranges(board_size, c_size);
-
-    int range[2];
-    MPI_Scatter(send_ranges, 2, MPI_INT, range, 2, MPI_INT, 0, MPI_COMM_WORLD);
-
-    if (c_rank == 0)
-        free(send_ranges);
-    #ifdef DEBUG
-        printf("P%d received ranges (%d, %d) from root\n", c_rank, range[0], range[1]);
-    #endif
-
-    // ========================================================================
-
     // get real ranges
-    int* send_expanded_ranges;
-    if (c_rank == 0)
-        send_expanded_ranges = get_real_ranges(board_size, c_size);
-
-    int expandend_ranges[2];
-    MPI_Scatter(send_expanded_ranges, 2, MPI_INT, expandend_ranges, 2, MPI_INT, 0, MPI_COMM_WORLD);
-    int lines = expandend_ranges[1] - expandend_ranges[0];
+    int* range = get_range(board_size, c_rank, c_size);
+    int lines = range[1] - range[0];
     int cols = board_size;
     int cells = cols * lines;
     #ifdef DEBUG
-        printf("P%d received expandend_ranges (%d, %d) from root\n", c_rank, expandend_ranges[0], expandend_ranges[1]);
+        printf("P%d received range (%d, %d) from root\n", c_rank, range[0], range[1]);
         printf("P%d total lines and cols (%d, %d)\n", c_rank, lines, cols);
     #endif
 
@@ -96,13 +74,12 @@ int main(int argc, char *argv[]) {
     int regions_counts[c_size];
     if (c_rank == 0) {
         for (int i = 0; i < c_size; i++) {
-            regions_offsets[i] = send_expanded_ranges[i*2] * board_size;
+            int* p_range = get_range(board_size, i, c_size);
+            regions_offsets[i] = p_range[0] * board_size;
 
-            int r_lines = send_expanded_ranges[i*2+1] - send_expanded_ranges[i*2];
+            int r_lines = p_range[1] - p_range[0];
             regions_counts[i] = r_lines * board_size;
         }
-
-        free(send_expanded_ranges);
     }
 
     #ifdef DEBUG
@@ -263,48 +240,35 @@ void read_file(FILE* f, cell_t* board, int size) {
     }
 }
 
-int* get_ranges(int lines, int regions) {
-    int* r = malloc(sizeof(int) * regions * 2);
+int* get_range(int lines, int rank, int size) {
+    int* range = malloc(sizeof(int) * 2);
+    int reg_lines = lines / size;
+    int rem_lines = lines % size;
 
-    int reg_lines = lines / regions;
-    int rem_lines = lines % regions;
-    int counter = 0;
-
-    for (int i = 0; i < regions; i++) {
-        int begin_line = counter;
-        int end_line = counter + reg_lines;
-
+    int start_line = 0;
+    for (int i = 0; i < rank; i++) {
+        start_line += reg_lines;
         if (rem_lines > 0) {
+            start_line++;
             rem_lines--;
-            end_line++;
         }
-        r[2*i] = begin_line;
-        r[2*i+1] = end_line;
-
-        counter = end_line;
     }
 
-    return r;
+    int end_line = start_line + reg_lines;
+    if (rem_lines > 0)
+        end_line++;
+
+    if (start_line - 1 > 0)
+        start_line--;
+    if (end_line + 1 < lines)
+        end_line++;
+
+    range[0] = start_line;
+    range[1] = end_line;
+
+    return range;
 }
 
-int* get_real_ranges(int lines, int regions) {
-    int* r_ranges = get_ranges(lines, regions);
-
-    for (int i = 0; i < regions; i++) {
-        int start_line = r_ranges[i*2];
-        int end_line = r_ranges[i*2+1];
-
-        if (start_line - 1 > 0)
-            start_line--;
-        if (end_line + 1 < lines)
-            end_line++;
-
-        r_ranges[i*2] = start_line;
-        r_ranges[i*2+1] = end_line;
-    }
-
-    return r_ranges;
-}
 
 cell_t* serialize_board(cell_t** board, int lines, int cols) {
     int cells = lines * cols;
