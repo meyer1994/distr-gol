@@ -8,26 +8,19 @@ typedef unsigned char cell_t;
 
 // prototypes
 int* get_ranges(int lines, int regions);
-void free_board(cell_t** board, int size);
 cell_t** allocate_board(int lines, int cols);
 int* get_real_ranges(int lines, int regions);
 void read_file(FILE* f, cell_t* board, int size);
+void free_board(cell_t** board, int lines);
 inline int adjacent_to(cell_t** board, int i, int j);
 cell_t* serialize_board(cell_t** board, int lines, int cols);
 void print_board(cell_t** board, int lines, int cols, int rank);
 void play(cell_t** board, cell_t** newboard, int lines, int cols);
 cell_t** deserialize_board(cell_t* serial_board, int lines, int cols);
+void print_serial(cell_t* serial_board, int lines, int cols, int rank);
+void exchange_borders(cell_t** board, int lines, int cols, int c_size, int c_rank);
 
-void print_serial(cell_t* serial_board, int lines, int cols, int rank) {
-    for (int i = 0; i < lines; i++) {
-        for (int j = 0; j < cols; j++)
-            printf ("%c", serial_board[i*cols+j] ? 'x' : '-');
-        if (rank > -1)
-            printf ("| [%d]\n", rank);
-        else
-            printf ("|\n");
-    }
-}
+
 
 int main(int argc, char *argv[]) {
 
@@ -74,6 +67,8 @@ int main(int argc, char *argv[]) {
     int range[2];
     MPI_Scatter(send_ranges, 2, MPI_INT, range, 2, MPI_INT, 0, MPI_COMM_WORLD);
 
+    if (c_rank == 0)
+        free(send_ranges);
     #ifdef DEBUG
         printf("P%d received ranges (%d, %d) from root\n", c_rank, range[0], range[1]);
     #endif
@@ -106,6 +101,8 @@ int main(int argc, char *argv[]) {
             int r_lines = send_expanded_ranges[i*2+1] - send_expanded_ranges[i*2];
             regions_counts[i] = r_lines * board_size;
         }
+
+        free(send_expanded_ranges);
     }
 
     #ifdef DEBUG
@@ -120,7 +117,7 @@ int main(int argc, char *argv[]) {
         }
     #endif
 
-    // // ========================================================================
+    // ========================================================================
 
     cell_t* serial_region_board = malloc(sizeof(cell_t) * cells);
     MPI_Scatterv(file_board, regions_counts, regions_offsets, MPI_UNSIGNED_CHAR, serial_region_board, cells, MPI_UNSIGNED_CHAR, 0, MPI_COMM_WORLD);
@@ -135,7 +132,7 @@ int main(int argc, char *argv[]) {
 
     cell_t** temp_board = allocate_board(lines, cols);
     cell_t** game_board = deserialize_board(serial_region_board, lines, cols);
-    // free(serial_region_board);  // commented for performance
+    free(serial_region_board);
 
     #ifdef DEBUG
         MPI_Barrier(MPI_COMM_WORLD);
@@ -154,19 +151,7 @@ int main(int argc, char *argv[]) {
             // print_board(temp_board, lines, cols, c_rank);
         #endif
 
-        if (c_rank > 0)
-            MPI_Send(temp_board[1], cols, MPI_UNSIGNED_CHAR, c_rank-1, 0, MPI_COMM_WORLD);
-
-        MPI_Status top_recv_st;
-        if (c_rank < c_size-1)
-            MPI_Recv(temp_board[lines-1], cols, MPI_UNSIGNED_CHAR, c_rank+1, 0, MPI_COMM_WORLD, &top_recv_st);
-
-        if (c_rank < c_size-1)
-            MPI_Send(temp_board[lines-2], cols, MPI_UNSIGNED_CHAR, c_rank+1, 1, MPI_COMM_WORLD);
-
-        MPI_Status bot_recv_st;
-        if (c_rank > 0)
-            MPI_Recv(temp_board[0], cols, MPI_UNSIGNED_CHAR, c_rank-1, 1, MPI_COMM_WORLD, &bot_recv_st);
+        exchange_borders(temp_board, lines, cols, c_size, c_rank);
 
         #ifdef DEBUG
             // if (c_rank > 0) {
@@ -194,22 +179,23 @@ int main(int argc, char *argv[]) {
 
     // ========================================================================
 
-    // commented for performance
-    // free(serial_region_board);
-    // free(temp_board);
     serial_region_board = serialize_board(game_board, lines, cols);
+    // commented for performance
+    // free_board(temp_board, lines);
+    // free_board(game_board, lines);
 
     MPI_Gatherv(serial_region_board, cells, MPI_UNSIGNED_CHAR, file_board, regions_counts, regions_offsets, MPI_UNSIGNED_CHAR, 0, MPI_COMM_WORLD);
 
     // print everything and finish
     if (c_rank == 0) {
         printf("Final:\n");
-        // free(matrix_board);
         for (int i = 0; i < board_size-2; i++) {
             for (int j = 0; j < board_size-2; j++)
                 printf ("%c", file_board[(i+1)*(board_size)+j+1] ? 'x' : ' ');
             printf ("\n");
         }
+        // commented for performance
+        // free(file_board);
     }
 
     MPI_Finalize();
@@ -222,8 +208,8 @@ cell_t** allocate_board(int lines, int cols) {
     return board;
 }
 
-void free_board(cell_t** board, int size) {
-    for (int i = 0; i < size; i++)
+void free_board(cell_t** board, int lines) {
+    for (int i = 0; i < lines; i++)
         free(board[i]);
     free(board);
 }
@@ -343,4 +329,31 @@ cell_t** deserialize_board(cell_t* serial_board, int lines, int cols) {
     }
 
     return prep_board;
+}
+
+void exchange_borders(cell_t** board, int lines, int cols, int c_size, int c_rank) {
+    if (c_rank > 0)
+        MPI_Send(board[1], cols, MPI_UNSIGNED_CHAR, c_rank-1, 0, MPI_COMM_WORLD);
+
+    MPI_Status top_recv_st;
+    if (c_rank < c_size-1)
+        MPI_Recv(board[lines-1], cols, MPI_UNSIGNED_CHAR, c_rank+1, 0, MPI_COMM_WORLD, &top_recv_st);
+
+    if (c_rank < c_size-1)
+        MPI_Send(board[lines-2], cols, MPI_UNSIGNED_CHAR, c_rank+1, 1, MPI_COMM_WORLD);
+
+    MPI_Status bot_recv_st;
+    if (c_rank > 0)
+        MPI_Recv(board[0], cols, MPI_UNSIGNED_CHAR, c_rank-1, 1, MPI_COMM_WORLD, &bot_recv_st);
+}
+
+void print_serial(cell_t* serial_board, int lines, int cols, int rank) {
+    for (int i = 0; i < lines; i++) {
+        for (int j = 0; j < cols; j++)
+            printf ("%c", serial_board[i*cols+j] ? 'x' : '-');
+        if (rank > -1)
+            printf ("| [%d]\n", rank);
+        else
+            printf ("|\n");
+    }
 }
