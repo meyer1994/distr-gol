@@ -7,5 +7,11 @@ RESULT=-DRESULT
 gol: gol.c
 	$(CC) $(RESULT) $(FLAGS) gol.c -o gol
 
+debug:
+	$(CC) $(RESULT) $(DEBUG) $(FLAGS) gol.c -o gol
+
+run:
+	mpirun -np 5 ./gol < input-little.in
+
 clean:
 	rm -rf gol
