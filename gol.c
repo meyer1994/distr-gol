@@ -116,7 +116,6 @@ int main(int argc, char *argv[]) {
     int steps = steps_size_send_buff[0];
     int board_size = steps_size_send_buff[1];
     #ifdef DEBUG
-        MPI_Barrier(MPI_COMM_WORLD);
         if (c_rank == 0)
             printf("\n");
         printf("P%d received b_steps (%d) and board_size (%d) from root\n", c_rank, steps, board_size);
@@ -135,7 +134,6 @@ int main(int argc, char *argv[]) {
     if (c_rank == 0)
         free(send_ranges);
     #ifdef DEBUG
-        MPI_Barrier(MPI_COMM_WORLD);
         printf("P%d received ranges (%d, %d) from root\n", c_rank, range[0], range[1]);
     #endif
 
@@ -152,7 +150,6 @@ int main(int argc, char *argv[]) {
     int cols = board_size;
     int cells = cols * lines;
     #ifdef DEBUG
-        MPI_Barrier(MPI_COMM_WORLD);
         printf("P%d received expandend_ranges (%d, %d) from root\n", c_rank, expandend_ranges[0], expandend_ranges[1]);
         printf("P%d lines and cols (%d, %d)\n", c_rank, lines, cols);
     #endif
@@ -173,7 +170,6 @@ int main(int argc, char *argv[]) {
     }
 
     #ifdef DEBUG
-        MPI_Barrier(MPI_COMM_WORLD);
         if (c_rank == 0) {
             printf("\noffsets [");
             for (int i = 0; i < c_size; i++)
@@ -191,28 +187,26 @@ int main(int argc, char *argv[]) {
     MPI_Scatterv(serial_board, regions_counts, regions_offsets, MPI_UNSIGNED_CHAR, serial_region_board, cells, MPI_UNSIGNED_CHAR, 0, MPI_COMM_WORLD);
 
     #ifdef DEBUG
-        MPI_Barrier(MPI_COMM_WORLD);
         printf("\n");
         printf("P%d received serial_region_board from root\n", c_rank);
-        for (int i = 0; i < lines; i++) {
-            for (int j = 0; j < cols; j++)
-                printf ("%s", serial_region_board[i*cols+j] ? "x " : "- ");
-            printf("| %d\n", c_rank);
-        }
+        // for (int i = 0; i < lines; i++) {
+        //     for (int j = 0; j < cols; j++)
+        //         printf ("%s", serial_region_board[i*cols+j] ? "x " : "- ");
+        //     printf("| %d\n", c_rank);
+        // }
     #endif
 
     // ========================================================================
 
-    // the problem is in this line
     cell_t** temp_board = allocate_board(lines, cols);
     cell_t** game_board = deserialize_board(serial_region_board, lines, cols);
-    free(serial_region_board);
+    // free(serial_region_board);
 
     #ifdef DEBUG
         MPI_Barrier(MPI_COMM_WORLD);
         printf("\n");
         printf("P%d's board is ready\n", c_rank);
-        print_board(game_board, lines, cols, c_rank);
+        // print_board(game_board, lines, cols, c_rank);
     #endif
 
     // ========================================================================
@@ -222,7 +216,7 @@ int main(int argc, char *argv[]) {
 
         #ifdef DEBUG
             printf("P%d finished a step (%d)\n", c_rank, steps);
-            print_board(temp_board, lines, cols, c_rank);
+            // print_board(temp_board, lines, cols, c_rank);
         #endif
 
         if (c_rank > 0)
@@ -240,19 +234,19 @@ int main(int argc, char *argv[]) {
             MPI_Recv(temp_board[0], cols, MPI_UNSIGNED_CHAR, c_rank-1, 1, MPI_COMM_WORLD, &bot_recv_st);
 
         #ifdef DEBUG
-            if (c_rank > 0) {
-                printf("P%d received top border\n", c_rank);
-                for (int i = 0; i < cols; i++)
-                    printf ("%s", temp_board[0][i] ? " x" : " -");
-                printf(" [%d]\n", c_rank);
-            }
+            // if (c_rank > 0) {
+            //     printf("P%d received top border\n", c_rank);
+            //     for (int i = 0; i < cols; i++)
+            //         printf ("%s", temp_board[0][i] ? " x" : " -");
+            //     printf(" [%d]\n", c_rank);
+            // }
 
-            if (c_rank < c_size-1) {
-                printf("P%d received bot border\n", c_rank);
-                for (int i = 0; i < cols; i++)
-                    printf ("%s", temp_board[lines-1][i] ? " x" : " -");
-                printf(" [%d]\n", c_rank);
-            }
+            // if (c_rank < c_size-1) {
+            //     printf("P%d received bot border\n", c_rank);
+            //     for (int i = 0; i < cols; i++)
+            //         printf ("%s", temp_board[lines-1][i] ? " x" : " -");
+            //     printf(" [%d]\n", c_rank);
+            // }
         #endif
 
         // switch
@@ -273,9 +267,13 @@ int main(int argc, char *argv[]) {
 
     // print everything and exit
     if (c_rank == 0) {
+        printf("Final:\n");
         // free(matrix_board);
-        matrix_board = deserialize_board(serial_board, board_size, board_size);
-        print_board(matrix_board, board_size, board_size, c_rank);
+        for (int i = 0; i < board_size-2; i++) {
+            for (int j = 0; j < board_size-2; j++)
+                printf ("%c", serial_board[(j+1)*(board_size)+i+1] ? 'x' : ' ');
+            printf ("\n");
+        }
     }
 
     MPI_Finalize();
@@ -328,8 +326,8 @@ void play(cell_t** board, cell_t** newboard, int lines, int cols) {
 void print_board(cell_t** board, int lines, int cols, int rank) {
     for (int i = 0; i < lines; i++) {
         for (int j = 0; j < cols; j++)
-            printf ("%s", board[i][j] ? " x" : " -");
-        printf ("| [P%d]\n", rank);
+            printf ("%c", board[i][j] ? 'x' : ' ');
+        printf ("\n");
     }
 }
 
