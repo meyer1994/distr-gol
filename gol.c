@@ -70,90 +70,17 @@ cell_t* serialize_board(cell_t** board, int lines, int cols) {
 }
 
 // needs refactoring hahaha (2am folks...)
-cell_t** prepare_board(cell_t* s_board, int lines, int cols, int rank, int size) {
-
-    // middle sections
-    if (rank > 0 && rank < size-1) {
-        cell_t** prep_board = malloc(sizeof(cell_t*) * lines);
-        for (int i = 0; i < lines; i++) {
-            prep_board[i] = malloc(sizeof(cell_t) * (cols + 2));
-            prep_board[i][0] = 0;
-            prep_board[i][cols+1] = 0;
-            memcpy(&prep_board[i][1], &s_board[i*cols], cols);
+cell_t** deserialize_board(cell_t* serial_board, int lines, int cols) {
+    int cells = lines * cols;
+    cell_t** prep_board = malloc(sizeof(cell_t*) * cells);
+    for (int i = 0; i < lines; i++) {
+        prep_board[i] = malloc(sizeof(cell_t) * cols);
+        for (int j = 0; j < cols; j++) {
+            memcpy(prep_board[i], &serial_board[i*cols], cols);
         }
-        return prep_board;
-
-    // only one process
-    } else if (size == 1) {
-        cell_t** prep_board = malloc(sizeof(cell_t*) * (lines + 2));
-        for (int i = 1; i <= lines; i++) {
-            prep_board[i] = malloc(sizeof(cell_t) * (cols + 2));
-            prep_board[i][0] = 0;
-            prep_board[i][cols+1] = 0;
-            memcpy(&prep_board[i][1], &s_board[(i-1)*cols], cols);
-        }
-        prep_board[0] = calloc(sizeof(cell_t), cols + 2);
-        prep_board[lines+1] = calloc(sizeof(cell_t), cols + 2);
-        return prep_board;
-
-    // top section
-    } else if (rank == 0) {
-        cell_t** prep_board = malloc(sizeof(cell_t*) * (lines + 1));
-        for (int i = 1; i <= lines; i++) {
-            prep_board[i] = malloc(sizeof(cell_t) * cols + 2);
-            prep_board[i][0] = 0;
-            prep_board[i][cols+1] = 0;
-            memcpy(&prep_board[i][1], &s_board[(i-1)*cols], cols);
-        }
-        prep_board[0] = calloc(sizeof(cell_t), cols + 2);
-        return prep_board;
-
-    // bottom section
-    } else {
-        cell_t** prep_board = malloc(sizeof(cell_t*) * (lines + 1));
-        for (int i = 0; i <= lines; i++) {
-            prep_board[i] = malloc(sizeof(cell_t) * cols + 2);
-            prep_board[i][0] = 0;
-            prep_board[i][cols+1] = 0;
-            memcpy(&prep_board[i][1], &s_board[i*cols], cols);
-        }
-        prep_board[lines] = calloc(sizeof(cell_t), cols + 2);
-        return prep_board;
     }
 
-    // borders
-    // if (rank == 0)
-    //     t_lines++;
-    // if (rank == size-1)
-    //     t_lines++;
-
-    // cell_t** prep_board = malloc(sizeof(cell_t*) * t_lines);
-
-    // int border_offs = 1;  // last section special case...
-
-    // // borders
-    // if (rank == 0)
-    //     prep_board[0] = calloc(sizeof(cell_t), cols+2);
-
-
-
-
-    // if (rank == size-1)
-    //     border_offs = 0;
-
-    // for (int i = 1; i <= lines; i++) {
-    //     printf("%d\n", i);
-    //     prep_board[i] = calloc(sizeof(cell_t), cols+2);
-    //     memcpy(&prep_board[i][1], &s_board[(i-border_offs)*cols], cols);
-    // }
-
-    // if (rank == size-1) {
-    //     prep_board[0] = calloc(sizeof(cell_t), cols+2);
-    //     memcpy(&prep_board[0][1], s_board, cols);
-    //     prep_board[t_lines-1] = calloc(sizeof(cell_t), cols+2);
-    // }
-
-    // return prep_board;
+    return prep_board;
 }
 
 int main(int argc, char *argv[]) {
@@ -166,82 +93,82 @@ int main(int argc, char *argv[]) {
     int c_size;
     MPI_Comm_size(MPI_COMM_WORLD, &c_size);
 
-    int b_steps;
-    int b_size;
-
-    cell_t** m_board;
+    cell_t** matrix_board;
 
     // ========================================================================
 
     // read file
+    int steps_size_send_buff[2];
     if (c_rank == 0) {
-        FILE* f_board = stdin;
-        fscanf(f_board, "%d %d", &b_size, &b_steps);
+        FILE* board_file = stdin;
+        fscanf(board_file, "%d %d", &steps_size_send_buff[1], &steps_size_send_buff[0]);
 
-        m_board = allocate_board(b_size, b_size);
+        steps_size_send_buff[1] += 2;  // +2 because of the zeroed borders
+        int board_size = steps_size_send_buff[1];
 
-        read_file(f_board, m_board, b_size);
+        matrix_board = allocate_board(board_size, board_size);
+        read_file(board_file, matrix_board, board_size-2);
 
-        fclose(f_board);
+        fclose(board_file);
     }
 
-    MPI_Bcast(&b_steps, 1, MPI_INT, 0, MPI_COMM_WORLD);
-    MPI_Bcast(&b_size, 1, MPI_INT, 0, MPI_COMM_WORLD);
+    MPI_Bcast(steps_size_send_buff, 2, MPI_INT, 0, MPI_COMM_WORLD);
+    int steps = steps_size_send_buff[0];
+    int board_size = steps_size_send_buff[1];
     #ifdef DEBUG
         MPI_Barrier(MPI_COMM_WORLD);
         if (c_rank == 0)
             printf("\n");
-        printf("P%d received b_steps (%d) from root\n", c_rank, b_steps);
+        printf("P%d received b_steps (%d) and board_size (%d) from root\n", c_rank, steps, board_size);
     #endif
 
     // ========================================================================
 
     // get ranges
-    int* b_ranges;
+    int* send_ranges;
     if (c_rank == 0)
-        b_ranges = get_ranges(b_size, c_size);
+        send_ranges = get_ranges(board_size, c_size);
 
-    int p_range[2];
-    MPI_Scatter(b_ranges, 2, MPI_INT, p_range, 2, MPI_INT, 0, MPI_COMM_WORLD);
+    int range[2];
+    MPI_Scatter(send_ranges, 2, MPI_INT, range, 2, MPI_INT, 0, MPI_COMM_WORLD);
 
     if (c_rank == 0)
-        free(b_ranges);
+        free(send_ranges);
     #ifdef DEBUG
         MPI_Barrier(MPI_COMM_WORLD);
-        if (c_rank == 0)
-            printf("\n");
-        printf("P%d received b_ranges (%d, %d) from root\n", c_rank, p_range[0], p_range[1]);
+        printf("P%d received ranges (%d, %d) from root\n", c_rank, range[0], range[1]);
     #endif
 
     // ========================================================================
 
     // get real ranges
-    int* b_real_ranges;
+    int* send_expanded_ranges;
     if (c_rank == 0)
-        b_real_ranges = get_real_ranges(b_size, c_size);
+        send_expanded_ranges = get_real_ranges(board_size, c_size);
 
-    int p_real_ranges[2];
-    MPI_Scatter(b_real_ranges, 2, MPI_INT, p_real_ranges, 2, MPI_INT, 0, MPI_COMM_WORLD);
-
+    int expandend_ranges[2];
+    MPI_Scatter(send_expanded_ranges, 2, MPI_INT, expandend_ranges, 2, MPI_INT, 0, MPI_COMM_WORLD);
+    int lines = expandend_ranges[1] - expandend_ranges[0];
+    int cols = board_size;
+    int cells = cols * lines;
     #ifdef DEBUG
         MPI_Barrier(MPI_COMM_WORLD);
-        if (c_rank == 0)
-            printf("\n");
-        printf("P%d received p_real_ranges (%d, %d) from root\n", c_rank, p_real_ranges[0], p_real_ranges[1]);
+        printf("P%d received expandend_ranges (%d, %d) from root\n", c_rank, expandend_ranges[0], expandend_ranges[1]);
+        printf("P%d lines and cols (%d, %d)\n", c_rank, lines, cols);
     #endif
 
     // ========================================================================
 
-    int s_board_offs[c_size];
-    int s_board_cnts[c_size];
-    cell_t* s_board;
+    int regions_offsets[c_size];
+    int regions_counts[c_size];
+    cell_t* serial_region_board;
     if (c_rank == 0) {
-        s_board = serialize_board(m_board, b_size, b_size);
+        serial_region_board = serialize_board(matrix_board, board_size, board_size);
         for (int i = 0; i < c_size; i++) {
-            s_board_offs[i] = b_real_ranges[i*2] * b_size;
+            regions_offsets[i] = send_expanded_ranges[i*2] * board_size;
 
-            int r_lines = b_real_ranges[i*2+1] - b_real_ranges[i*2];
-            s_board_cnts[i] = r_lines * b_size;
+            int r_lines = send_expanded_ranges[i*2+1] - send_expanded_ranges[i*2];
+            regions_counts[i] = r_lines * board_size;
         }
     }
 
@@ -250,56 +177,51 @@ int main(int argc, char *argv[]) {
         if (c_rank == 0) {
             printf("\noffsets [");
             for (int i = 0; i < c_size; i++)
-                printf(" %d", s_board_offs[i]);
+                printf(" %2d", regions_offsets[i]);
             printf(" ]\n counts [");
             for (int i = 0; i < c_size; i++)
-                printf(" %d", s_board_cnts[i]);
+                printf(" %2d", regions_counts[i]);
             printf(" ]\n");
         }
     #endif
 
-    int p_lines = p_real_ranges[1] - p_real_ranges[0];
-    int p_cells = p_lines * b_size;
-    cell_t* p_board = malloc(sizeof(cell_t) * p_cells);
-    MPI_Scatterv(s_board, s_board_cnts, s_board_offs, MPI_UNSIGNED_CHAR, p_board, p_cells, MPI_UNSIGNED_CHAR, 0, MPI_COMM_WORLD);
+    // ========================================================================
+
+    cell_t* serial_board = malloc(sizeof(cell_t) * cells);
+    MPI_Scatterv(serial_region_board, regions_counts, regions_offsets, MPI_UNSIGNED_CHAR, serial_board, cells, MPI_UNSIGNED_CHAR, 0, MPI_COMM_WORLD);
 
     #ifdef DEBUG
         MPI_Barrier(MPI_COMM_WORLD);
         printf("\n");
-        printf("P%d received p_board from root\n", c_rank);
-        for (int i = 0; i < p_lines; i++) {
-            for (int j = 0; j < b_size; j++)
-                printf ("%s", p_board[i*b_size+j] ? "x " : "- ");
+        printf("P%d received serial_board from root\n", c_rank);
+        for (int i = 0; i < lines; i++) {
+            for (int j = 0; j < cols; j++)
+                printf ("%s", serial_board[i*cols+j] ? "x " : "- ");
             printf("| %d\n", c_rank);
         }
     #endif
 
     // ========================================================================
 
-    cell_t** p_temp_board = allocate_board(p_lines+2, b_size+2);
-    cell_t** p_prep_board = prepare_board(p_board, p_lines, b_size, c_rank, c_size);
-    free(p_board);
+    // the problem is in this line
+    cell_t** temp_board = allocate_board(lines, cols);
+    cell_t** game_board = deserialize_board(serial_board, lines, cols);
+    print_board(game_board, lines, cols, c_rank);
+    free(serial_board);
 
     #ifdef DEBUG
         MPI_Barrier(MPI_COMM_WORLD);
         printf("\n");
         printf("P%d's board is ready\n", c_rank);
-        int extra_lines = 0;
-        if (c_rank == 0)
-            extra_lines++;
-        if (c_rank == c_size-1)
-            extra_lines++;
-
-        print_board(p_prep_board, p_lines+extra_lines, b_size+2, c_rank);
+        // print_board(game_board, lines, cols, c_rank);
     #endif
 
     // ========================================================================
 
     // while (b_steps > 0) {
-
-    //     play(p_prep_board, p_temp_board, p_lines, b_size);
-    //     printf("P%d finished a step (%d)\n", c_rank, b_steps);
-    //     print_board(p_temp_board, p_lines+2, b_size+2, c_rank);
+    //     // play(p_prep_board, p_temp_board, p_lines, board_size);
+    //     // printf("P%d finished a step (%d)\n", c_rank, b_steps);
+    //     // print_board(p_temp_board, p_lines+extra_lines, board_size+2, c_rank);
     //     break;
     // }
 
@@ -340,40 +262,41 @@ void free_board(cell_t** board, int size) {
 
 inline int adjacent_to(cell_t** board, int i, int j) {
     int count = 0;
-
+    // printf("(%d, %d)\n", i, j);
     count += board[i-1][j];
     count += board[i-1][j-1];
     count += board[i-1][j+1];
     count += board[i][j-1];
+    count += board[i][j+1];
     count += board[i+1][j-1];
     count += board[i+1][j];
     count += board[i+1][j+1];
-    count += board[i][j+1];
 
     return count;
 }
 
 void play(cell_t** board, cell_t** newboard, int lines, int cols) {
-  int	a;
-  /* for each cell, apply the rules of Life */
-    for (int i = 1; i <= lines; i++)
+    for (int i = 1; i <= lines; i++) {
         for (int j = 1; j <= cols; j++) {
-            a = adjacent_to(board, i, j);
-            if (a == 2)
-                newboard[i][j] = board[i][j];
-            if (a == 3)
-                newboard[i][j] = 1;
-            if (a < 2)
-                newboard[i][j] = 0;
-            if (a > 3)
-                newboard[i][j] = 0;
+            // printf("%d, %d\n", i, j);
+            int a = adjacent_to(board, i, j);
+            printf("%d ", a);
+            // if (a == 2)
+            //     newboard[i][j] = board[i][j];
+            // if (a == 3)
+            //     newboard[i][j] = 1;
+            // if (a < 2)
+            //     newboard[i][j] = 0;
+            // if (a > 3)
+            //     newboard[i][j] = 0;
+        }
+        printf("\n");
     }
 }
 
 void print_board(cell_t** board, int lines, int cols, int rank) {
     for (int j = 0; j < lines; j++) {
         for (int i = 0; i < cols; i++)
-            // printf("(%2d, %2d)-", j, i);
             printf ("%s", board[j][i] ? " x" : " -");
         printf ("| [P%d]\n", rank);
     }
@@ -385,6 +308,6 @@ void read_file(FILE* f, cell_t** board, int size) {
     for (int j = 0; j < size; j++) {
         fgets (s, size + 10, f);
         for (int i = 0; i < size; i++)
-            board[i][j] = s[i] == 'x';
+            board[i+1][j+1] = s[i] == 'x';
     }
 }

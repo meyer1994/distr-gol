@@ -11,7 +11,7 @@ debug:
 	$(CC) $(RESULT) $(DEBUG) $(FLAGS) gol.c -o gol
 
 run:
-	mpirun -np 5 ./gol < input-little.in
+	mpirun -np 3 ./gol < input-little.in
 
 clean:
 	rm -rf gol
