@@ -212,7 +212,7 @@ int main(int argc, char *argv[]) {
         MPI_Barrier(MPI_COMM_WORLD);
         printf("\n");
         printf("P%d's board is ready\n", c_rank);
-        // print_board(game_board, lines, cols, c_rank);
+        print_board(game_board, lines, cols, c_rank);
     #endif
 
     // ========================================================================
@@ -269,7 +269,14 @@ int main(int argc, char *argv[]) {
     // free(temp_board);
     serial_region_board = serialize_board(game_board, lines, cols);
 
-    // MPI_Gatherv(serial_region_board, cells, MPI_UNSIGNED_CHAR, );
+    MPI_Gatherv(serial_region_board, cells, MPI_UNSIGNED_CHAR, serial_board, regions_counts, regions_offsets, MPI_UNSIGNED_CHAR, 0, MPI_COMM_WORLD);
+
+    // print everything and exit
+    if (c_rank == 0) {
+        // free(matrix_board);
+        matrix_board = deserialize_board(serial_board, board_size, board_size);
+        print_board(matrix_board, board_size, board_size, c_rank);
+    }
 
     MPI_Finalize();
 }
