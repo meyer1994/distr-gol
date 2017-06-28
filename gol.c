@@ -287,9 +287,7 @@ cell_t** deserialize_board(cell_t* serial_board, int lines, int cols) {
     cell_t** prep_board = malloc(sizeof(cell_t*) * cells);
     for (int i = 0; i < lines; i++) {
         prep_board[i] = malloc(sizeof(cell_t) * cols);
-        for (int j = 0; j < cols; j++) {
-            memcpy(prep_board[i], &serial_board[i*cols], cols);
-        }
+        memcpy(prep_board[i], &serial_board[i*cols], cols);
     }
 
     return prep_board;
